@@ -18,10 +18,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Log in to the Container registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -29,27 +29,36 @@ jobs:
 
       - name: Extract metadata (tags, labels) for Docker
         id: meta
-        uses: docker/metadata-action@v4
+        uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v4
+        uses: docker/build-push-action@v5
         with:
-          context:.
+          context: .
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
       - name: Create Desired State Manifest
         id: create_manifest
+        shell: bash
         run: |
-          IMAGE_TAG=$(echo ${{ steps.meta.outputs.tags }} | cut -d ',' -f 1)
-          VERSION=$(echo ${{ github.ref_name }})
-          cat <<EOF > desired-state.json
+          set -euo pipefail
+          IMAGE_TAG="$(echo "${{ steps.meta.outputs.tags }}" | tr ',' '\n' | head -n1)"
+          VERSION="${{ github.ref_name }}"
+          cat > desired-state.json <<'EOF'
           {
             "payload": {
-              "domains":
+              "domains": [
+                {
+                  "name": "sdv",
+                  "components": [
+                    {
+                      "name": "app",
+                      "image": "__IMAGE__",
+                      "version": "__VERSION__"
                     }
                   ]
                 }
@@ -57,32 +66,60 @@ jobs:
             }
           }
           EOF
-          echo "Manifest created for image $IMAGE_TAG"
+          # replace placeholders
+          sed -i "s|__IMAGE__|${IMAGE_TAG}|g" desired-state.json
+          sed -i "s|__VERSION__|${VERSION}|g" desired-state.json
+          echo "Manifest created for image ${IMAGE_TAG}"
 
       - name: Trigger hawkBit Rollout
+        shell: bash
         env:
-          HAWKBIT_URL: ${{ secrets.HAWKBIT_URL }}
+          HAWKBIT_URL: ${{ secrets.HAWKBIT_URL }}          # e.g. https://hawkbit.example.com
           HAWKBIT_USER: ${{ secrets.HAWKBIT_USER }}
           HAWKBIT_PASS: ${{ secrets.HAWKBIT_PASS }}
-          TARGET_ID: ${{ secrets.TARGET_DEVICE_ID }}
+          TARGET_ID: ${{ secrets.TARGET_DEVICE_ID }}       # controller/target id
           VERSION: ${{ github.ref_name }}
         run: |
-          MODULE_ID=$(curl -s -u $HAWKBIT_USER:$HAWKBIT_PASS -X POST "$HAWKBIT_URL/rest/v1/softwaremodules" \
-            -H "Content-Type: application/json" \
-            -d '' | jq -r '..id')
-          
-          curl -s -u $HAWKBIT_USER:$HAWKBIT_PASS -X POST "$HAWKBIT_URL/rest/v1/softwaremodules/$MODULE_ID/artifacts" \
-            -H "Content-Type: multipart/form-data" \
-            -F "file=@desired-state.json"
-            
-          DIST_ID=$(curl -s -u $HAWKBIT_USER:$HAWKBIT_PASS -X POST "$HAWKBIT_URL/rest/v1/distributionsets" \
-            -H "Content-Type: application/json" \
-            -d '' | jq -r '..id')
-            
-          curl -s -u $HAWKBIT_USER:$HAWKBIT_PASS -X POST "$HAWKBIT_URL/rest/v1/distributionsets/$DIST_ID/modules" \
+          set -euo pipefail
+
+          # Create Software Module (type "application" as example)
+          MODULE_ID=$(
+            curl -s -u "$HAWKBIT_USER:$HAWKBIT_PASS" \
+              -H "Content-Type: application/json" \
+              -X POST "$HAWKBIT_URL/rest/v1/softwaremodules" \
+              -d "{\"name\":\"SDV App\",\"version\":\"${VERSION}\",\"type\":\"application\",\"vendor\":\"sdv\",\"description\":\"SDV image ${VERSION}\"}" \
+            | jq -r '.id'
+          )
+          echo "MODULE_ID=${MODULE_ID}"
+
+          # Upload artifact (desired-state.json)
+          curl -s -u "$HAWKBIT_USER:$HAWKBIT_PASS" \
+            -X POST "$HAWKBIT_URL/rest/v1/softwaremodules/${MODULE_ID}/artifacts" \
+            -H "Accept: application/json" \
+            -F "file=@desired-state.json;type=application/json" > /dev/null
+          echo "Artifact uploaded"
+
+          # Create Distribution Set (type optional)
+          DIST_ID=$(
+            curl -s -u "$HAWKBIT_USER:$HAWKBIT_PASS" \
+              -H "Content-Type: application/json" \
+              -X POST "$HAWKBIT_URL/rest/v1/distributionsets" \
+              -d "{\"name\":\"SDV Distribution\",\"version\":\"${VERSION}\",\"type\":\"application\",\"description\":\"SDV DS ${VERSION}\"}" \
+            | jq -r '.id'
+          )
+          echo "DIST_ID=${DIST_ID}"
+
+          # Assign Software Module to Distribution Set
+          curl -s -u "$HAWKBIT_USER:$HAWKBIT_PASS" \
             -H "Content-Type: text/uri-list" \
-            --data-binary "$HAWKBIT_URL/rest/v1/softwaremodules/$MODULE_ID"
-            
-          curl -s -u $HAWKBIT_USER:$HAWKBIT_PASS -X POST "$HAWKBIT_URL/rest/v1/rollouts" \
+            -X POST "$HAWKBIT_URL/rest/v1/distributionsets/${DIST_ID}/modules" \
+            --data-binary "$HAWKBIT_URL/rest/v1/softwaremodules/${MODULE_ID}" > /dev/null
+          echo "Module assigned to Distribution Set"
+
+          # Create Rollout to specific target
+          # Note: 'targets' expects a list of target IDs; alternatively use 'targetFilterQuery'
+          curl -s -u "$HAWKBIT_USER:$HAWKBIT_PASS" \
             -H "Content-Type: application/json" \
-            -d '{"name": "Deploy '$VERSION'", "distributionSet": "'$HAWKBIT_URL/rest/v1/distributionsets/$DIST_ID'", "targets":, "start": true}'
+            -X POST "$HAWKBIT_URL/rest/v1/rollouts" \
+            -d "{\"name\":\"Deploy ${VERSION}\",\"distributionSetId\":${DIST_ID},\"targets\":[\"${TARGET_ID}\"],\"start\":true}" > /dev/null
+          echo "Rollout created and started"
