@@ -1,0 +1,121 @@
+{
+	"domains": [
+		{
+			"id": "containers",
+			"config": [
+				{
+					"key": "systemContainers",
+					"value": "self-update-agent"
+				}
+			],
+			"components": [
+				{
+					"id": "hello-world",
+					"version": "latest",
+					"config": [
+						{
+							"key": "image",
+							"value": "docker.io/library/hello-world:latest"
+						},
+						{
+							"key": "env",
+							"value": "x=y"
+						},
+						{
+							"key": "env",
+							"value": "a=b"
+						},
+						{
+							"key": "cmd",
+							"value": "arg1"
+						},
+						{
+							"key": "cmd",
+							"value": "arg2"
+						},
+						{
+							"key": "device",
+							"value": "/dev/tty:/dev/tty:rw"
+						},
+						{
+							"key": "port",
+							"value": "80:80/tcp"
+						},
+						{
+							"key": "network",
+							"value": "host"
+						},
+						{
+							"key": "host",
+							"value": "host_name"
+						},
+						{
+							"key": "mount",
+							"value": "/data:/data:private"
+						},
+						{
+							"key": "terminal",
+							"value": "true"
+						},
+						{
+							"key": "interactive",
+							"value": "true"
+						},
+						{
+							"key": "privileged",
+							"value": "true"
+						},
+						{
+							"key": "restartPolicy",
+							"value": "always"
+						},
+						{
+							"key": "restartMaxRetries",
+							"value": "3"
+						},
+						{
+							"key": "restartTimeout",
+							"value": "1000"
+						},
+						{
+							"key": "logDriver",
+							"value": "json-file"
+						},
+						{
+							"key": "logMaxFiles",
+							"value": "3"
+						},
+						{
+							"key": "logMaxSize",
+							"value": "5M"
+						},
+						{
+							"key": "logPath",
+							"value": "/var/log"
+						},
+						{
+							"key": "logMode",
+							"value": "blocking"
+						},
+						{
+							"key": "logMaxBufferSize",
+							"value": "1M"
+						},
+						{
+							"key": "memory",
+							"value": "200M"
+						},
+						{
+							"key": "memorySwap",
+							"value": "300M"
+						},
+						{
+							"key": "memoryReservation",
+							"value": "100M"
+						}
+					]
+				}
+			]
+		}
+	]
+}
