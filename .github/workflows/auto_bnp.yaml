@@ -1,17 +1,16 @@
-#.github/workflows/deploy.yml
-name: Build, Push, and Deploy Container
+name: Build, Push, and Deploy to SDV
 
 on:
   push:
-    branches:
-      - main
+    tags:
+      - 'v*'
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  build-and-push-image:
+  deploy:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -19,10 +18,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
       - name: Log in to the Container registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v2
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -30,50 +29,65 @@ jobs:
 
       - name: Extract metadata (tags, labels) for Docker
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v4
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v4
         with:
           context:.
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-  trigger-ota-update:
-    needs: build-and-push-image
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.x'
-      
-      - name: Install MQTT client
-        run: pip install paho-mqtt
-
-      - name: Generate Desired State JSON
-        id: desired_state
+      - name: Create Desired State Manifest
+        id: create_manifest
         run: |
-          IMAGE_TAG=$(echo ${{ github.sha }} | cut -c1-7)
-          JSON_CONTENT=$(cat./.github/workflows/desired-state-template.json | \
-                         sed "s/\\\${IMAGE_TAG}/$IMAGE_TAG/g" | \
-                         sed "s|\\\${IMAGE_NAME}|${{ env.IMAGE_NAME }}|g")
-          echo "payload=$JSON_CONTENT" >> $GITHUB_OUTPUT
-        
-      - name: Publish Desired State to MQTT
+          IMAGE_TAG=$(echo ${{ steps.meta.outputs.tags }} | cut -d ',' -f 1)
+          VERSION=$(echo ${{ github.ref_name }})
+          cat <<EOF > desired-state.json
+          {
+            "payload": {
+              "domains":
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+          EOF
+          echo "Manifest created for image $IMAGE_TAG"
+
+      - name: Trigger hawkBit Rollout
         env:
-          MQTT_HOST: ${{ secrets.MQTT_HOST }}
-          MQTT_USER: ${{ secrets.MQTT_USER }}
-          MQTT_PASS: ${{ secrets.MQTT_PASS }}
-          DEVICE_TENANT: ${{ secrets.DEVICE_TENANT }}
-          DEVICE_ID: ${{ secrets.DEVICE_ID }}
-          DESIRED_STATE_PAYLOAD: ${{ steps.desired_state.outputs.payload }}
+          HAWKBIT_URL: ${{ secrets.HAWKBIT_URL }}
+          HAWKBIT_USER: ${{ secrets.HAWKBIT_USER }}
+          HAWKBIT_PASS: ${{ secrets.HAWKBIT_PASS }}
+          TARGET_ID: ${{ secrets.TARGET_DEVICE_ID }}
+          VERSION: ${{ github.ref_name }}
         run: |
-          python./.github/workflows/publish_mqtt.py
+          # Step 1: Create Software Module
+          MODULE_ID=$(curl -s -u $HAWKBIT_USER:$HAWKBIT_PASS -X POST "$HAWKBIT_URL/rest/v1/softwaremodules" \
+            -H "Content-Type: application/json" \
+            -d '' | jq -r '..id')
+          
+          # Step 2: Upload Artifact (Desired State Manifest)
+          curl -s -u $HAWKBIT_USER:$HAWKBIT_PASS -X POST "$HAWKBIT_URL/rest/v1/softwaremodules/$MODULE_ID/artifacts" \
+            -H "Content-Type: multipart/form-data" \
+            -F "file=@desired-state.json"
+            
+          # Step 3: Create Distribution Set
+          DIST_ID=$(curl -s -u $HAWKBIT_USER:$HAWKBIT_PASS -X POST "$HAWKBIT_URL/rest/v1/distributionsets" \
+            -H "Content-Type: application/json" \
+            -d '' | jq -r '..id')
+            
+          # Step 4: Assign Module to Distribution
+          curl -s -u $HAWKBIT_USER:$HAWKBIT_PASS -X POST "$HAWKBIT_URL/rest/v1/distributionsets/$DIST_ID/modules" \
+            -H "Content-Type: text/uri-list" \
+            --data-binary "$HAWKBIT_URL/rest/v1/softwaremodules/$MODULE_ID"
+            
+          # Step 5: Create and Start Rollout
+          curl -s -u $HAWKBIT_USER:$HAWKBIT_PASS -X POST "$HAWKBIT_URL/rest/v1/rollouts" \
+            -H "Content-Type: application/json" \
+            -d '{"name": "Deploy '$VERSION'", "distributionSet": "'$HAWKBIT_URL/rest/v1/distributionsets/$DIST_ID'", "targets":, "start": true}'
