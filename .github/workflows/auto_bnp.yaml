@@ -67,27 +67,22 @@ jobs:
           TARGET_ID: ${{ secrets.TARGET_DEVICE_ID }}
           VERSION: ${{ github.ref_name }}
         run: |
-          # Step 1: Create Software Module
           MODULE_ID=$(curl -s -u $HAWKBIT_USER:$HAWKBIT_PASS -X POST "$HAWKBIT_URL/rest/v1/softwaremodules" \
             -H "Content-Type: application/json" \
             -d '' | jq -r '..id')
           
-          # Step 2: Upload Artifact (Desired State Manifest)
           curl -s -u $HAWKBIT_USER:$HAWKBIT_PASS -X POST "$HAWKBIT_URL/rest/v1/softwaremodules/$MODULE_ID/artifacts" \
             -H "Content-Type: multipart/form-data" \
             -F "file=@desired-state.json"
             
-          # Step 3: Create Distribution Set
           DIST_ID=$(curl -s -u $HAWKBIT_USER:$HAWKBIT_PASS -X POST "$HAWKBIT_URL/rest/v1/distributionsets" \
             -H "Content-Type: application/json" \
             -d '' | jq -r '..id')
             
-          # Step 4: Assign Module to Distribution
           curl -s -u $HAWKBIT_USER:$HAWKBIT_PASS -X POST "$HAWKBIT_URL/rest/v1/distributionsets/$DIST_ID/modules" \
             -H "Content-Type: text/uri-list" \
             --data-binary "$HAWKBIT_URL/rest/v1/softwaremodules/$MODULE_ID"
             
-          # Step 5: Create and Start Rollout
           curl -s -u $HAWKBIT_USER:$HAWKBIT_PASS -X POST "$HAWKBIT_URL/rest/v1/rollouts" \
             -H "Content-Type: application/json" \
             -d '{"name": "Deploy '$VERSION'", "distributionSet": "'$HAWKBIT_URL/rest/v1/distributionsets/$DIST_ID'", "targets":, "start": true}'
