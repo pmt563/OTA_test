@@ -1,0 +1,18 @@
+{
+  "topic": "${DEVICE_TENANT}/${DEVICE_ID}/command///req",
+  "path": "/features/update-manager/inbox/messages/triggerUpdate",
+  "value": {
+    "activityId": "update-${IMAGE_TAG}",
+    "desiredState": {
+      "domains": [
+        {
+          "id": "containers",
+          "config":,
+          "components":
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
